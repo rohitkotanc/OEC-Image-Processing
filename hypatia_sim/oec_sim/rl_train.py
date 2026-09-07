@@ -45,7 +45,7 @@ def _require_sb3():
 
 
 def train(timesteps=5_000_000, train_rates_mbps=(1.5, 2.0, 2.5),
-          n_train_seeds=100, out_path='ppo_oec.zip'):
+          n_train_seeds=100, out_path='ppo_oec.zip', utility_mode='legacy'):
     _require_sb3()
     import numpy as np
     from sb3_contrib import MaskablePPO
@@ -53,7 +53,8 @@ def train(timesteps=5_000_000, train_rates_mbps=(1.5, 2.0, 2.5),
     from stable_baselines3.common.vec_env import DummyVecEnv
 
     from .rl_env import make_gym_env, N_ACTIONS
-
+    C.apply_utility_mode(utility_mode)
+    print(f'Training PPO with utility={C.UTIL_MODE}')
     topo = T.build_topology()
 
     def _mask_fn(env):
@@ -61,13 +62,16 @@ def train(timesteps=5_000_000, train_rates_mbps=(1.5, 2.0, 2.5),
 
     def _make(rate_mbps, seed):
         def _thunk():
-            with C.config_override(GS_RATE_BPS=rate_mbps * 1e6):
-                env = make_gym_env(topo, seed=seed)
+            env = make_gym_env(
+                topo,
+                seed=seed,
+                gs_rate_bps=rate_mbps * 1e6
+            )
             return ActionMasker(env, _mask_fn)
         return _thunk
 
     envs = [_make(rate, seed) for rate in train_rates_mbps
-           for seed in range(n_train_seeds // len(train_rates_mbps))]
+           for seed in range(n_train_seeds)]
     vec_env = DummyVecEnv(envs)
 
     model = MaskablePPO('MlpPolicy', vec_env, verbose=1,
@@ -142,6 +146,9 @@ if __name__ == '__main__':
     pt = sub.add_parser('train')
     pt.add_argument('--timesteps', type=int, default=5_000_000)
     pt.add_argument('--out', default='ppo_oec.zip')
+    pt.add_argument('--utility', default='legacy',
+                    choices=('legacy', 'unified'))
     args = p.parse_args()
     if args.cmd == 'train':
-        train(timesteps=args.timesteps, out_path=args.out)
+        train(timesteps=args.timesteps, out_path=args.out,
+              utility_mode=args.utility)

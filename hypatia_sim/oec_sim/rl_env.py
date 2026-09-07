@@ -195,7 +195,7 @@ class OECDepthEnv:
         return self._obs(), reward, terminated, False, {}
 
 
-def make_gym_env(topo, seed=None, tasks=None):
+def make_gym_env(topo, seed=None, tasks=None, gs_rate_bps=None):
     """Wrap OECDepthEnv as a real gymnasium.Env (needs `pip install
     gymnasium`); raises ImportError with an actionable message otherwise."""
     if gym is None:
@@ -207,19 +207,41 @@ def make_gym_env(topo, seed=None, tasks=None):
 
         def __init__(self):
             super().__init__()
-            self._env = OECDepthEnv(topo, seed=seed, tasks=tasks)
-            self.observation_space = spaces.Box(-10.0, 10.0, shape=(OBS_DIM,),
-                                                dtype=np.float32)
+            self._gs_rate_bps = gs_rate_bps
+            if self._gs_rate_bps is None:
+                self._env = OECDepthEnv(topo, seed=seed, tasks=tasks)
+            else:
+                with C.config_override(GS_RATE_BPS=self._gs_rate_bps):
+                    self._env = OECDepthEnv(topo, seed=seed, tasks=tasks)
+
+            self.observation_space = spaces.Box(
+                -10.0,
+                10.0,
+                shape=(OBS_DIM,),
+                dtype=np.float32
+            )
             self.action_space = spaces.Discrete(N_ACTIONS)
 
         def reset(self, *, seed=None, options=None):
-            obs, info = self._env.reset(seed=seed)
-            return obs, info
+            if self._gs_rate_bps is None:
+                return self._env.reset(seed=seed)
+
+            with C.config_override(GS_RATE_BPS=self._gs_rate_bps):
+                return self._env.reset(seed=seed)
 
         def step(self, action):
-            return self._env.step(action)
+            if self._gs_rate_bps is None:
+                return self._env.step(action)
+
+            with C.config_override(GS_RATE_BPS=self._gs_rate_bps):
+                return self._env.step(action)
 
         def action_masks(self):
-            return self._env.action_masks()
+            if self._gs_rate_bps is None:
+                return self._env.action_masks()
+
+            with C.config_override(GS_RATE_BPS=self._gs_rate_bps):
+                return self._env.action_masks()
 
     return _GymOECDepthEnv()
+
