@@ -24,6 +24,8 @@ from .schedulers import GreedyScheduler, MPCScheduler
 
 RATES_MBPS = [0.75, 1.0, 1.5, 2.0, 3.0, 4.0]
 SEEDS = [42, 43, 44, 45, 46]
+PPO_EVAL_SEEDS = list(range(100, 120))
+PPO_EVAL_RATES_MBPS = [0.75, 1.0, 2.0, 3.0, 4.0]
 
 # Routing only has leverage where the FABRIC is scarce. Under gbs-limited the
 # per-GBS aggregate budget is >=12x tighter than any ISL a route could cross,
@@ -150,6 +152,48 @@ def _plot(rows):
     plt.close(fig)
     print(f'wrote {os.path.relpath(out)}')
 
+def run_ppo_eval(legacy_path, unified_path, quick=False):
+    from .rl_train import RLScheduler
+
+    rates = PPO_EVAL_RATES_MBPS
+    seeds = PPO_EVAL_SEEDS
+    if quick:
+        rates = [2.0]
+        seeds = seeds[:2]
+
+    os.makedirs(OUT_DIR, exist_ok=True)
+    topo = T.build_topology()
+    rows = []
+
+    for rate in rates:
+        with C.config_override(GS_RATE_BPS=rate * 1e6):
+            for seed in seeds:
+                with C.config_override(RNG_SEED=seed):
+                    makers = [
+                        ('ppo-legacy', legacy_path),
+                        ('ppo-unified', unified_path),
+                    ]
+                    for name, path in makers:
+                        tk = TK.generate_tasks(topo)
+                        tot_img = sum(k.n_images for k in tk)
+                        sched = RLScheduler(topo, tk, model_path=path)
+                        sched.name = name
+                        t0 = time.time()
+                        hist = sched.run()
+                        wall_s = time.time() - t0
+                        rows.append(_row(rate, seed, name, tk, hist,
+                                         tot_img, wall_s, obj=sched))
+                        print(f'  rate={rate:4.2f}Mbps seed={seed:3d} '
+                              f'{name:16s} util={hist["utility"][-1]:7.2f} '
+                              f'({wall_s:5.1f}s)', flush=True)
+
+    path = os.path.join(OUT_DIR, 'results_ppo_eval.csv')
+    with open(path, 'w', newline='') as f:
+        w = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+        w.writeheader()
+        w.writerows(rows)
+    print(f'wrote {len(rows)} rows -> {os.path.relpath(path)}')
+    return rows
 
 def run_couplings(isl_rates_mbps=ISL_RATES_MBPS, seeds=COUPLING_SEEDS,
                   quick=False):
@@ -211,9 +255,14 @@ if __name__ == '__main__':
                          'fabric-limited) instead of the GBS-rate grid')
     ap.add_argument('--utility', default=C.UTIL_MODE,
                     choices=('legacy', 'unified'))
+    ap.add_argument('--ppo-eval', action='store_true')
+    ap.add_argument('--ppo-legacy', default='ppo_legacy_corrected.zip')
+    ap.add_argument('--ppo-unified', default='ppo_unified.zip')
     args = ap.parse_args()
     C.apply_utility_mode(args.utility)
-    if args.couplings:
+    if args.ppo_eval:
+        run_ppo_eval(args.ppo_legacy, args.ppo_unified, quick=args.quick)
+    elif args.couplings:
         run_couplings(quick=args.quick)
     else:
         run(include_hier=args.hier, quick=args.quick)

@@ -385,6 +385,8 @@ def main(argv=None):
                    help="'legacy' reproduces the committed single-factor "
                         "score exactly; 'unified' turns on the four-factor "
                         'score (quality/timeliness/coverage/cost + fairness)')
+    p.add_argument('--ppo-legacy', default=None)
+    p.add_argument('--ppo-unified', default=None)
     p.add_argument('--check-golden', action='store_true',
                    help='assert the run reproduces oec_scenario/golden/'
                         'legacy_summary.json to 1e-4 and exit non-zero on '
@@ -411,6 +413,20 @@ def main(argv=None):
           f'({C.N_SATS} sats, {len(topo.isl_pairs)} ISLs, {C.N_SLOTS} slots)')
 
     extra_makers = []
+    if args.ppo_legacy or args.ppo_unified:
+        from .rl_train import RLScheduler
+
+        def make_rl(path, name):
+            def _make(tp, tk):
+                sched = RLScheduler(tp, tk, model_path=path)
+                sched.name = name
+                return sched
+            return _make
+
+        if args.ppo_legacy:
+            extra_makers.append(make_rl(args.ppo_legacy, 'ppo-legacy'))
+        if args.ppo_unified:
+            extra_makers.append(make_rl(args.ppo_unified, 'ppo-unified'))
     if args.congestion:
         extra_makers.append(lambda tp, tk: MPCScheduler(tp, tk, route_mode='predictive'))
     if args.couplings:
